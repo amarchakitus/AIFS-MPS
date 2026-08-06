@@ -27,6 +27,10 @@ USAGE
 
 command -v uv >/dev/null || { echo "uv is required: https://docs.astral.sh/uv/" >&2; exit 1; }
 
+# Without this, uv warns about the VIRTUAL_ENV
+# mismatch on every invocation.
+unset VIRTUAL_ENV
+
 cmd="${1:-}"; shift || true
 case "$cmd" in
     setup)
