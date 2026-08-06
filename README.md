@@ -37,11 +37,9 @@ forecasts/ens/init_20260806T06.zarr        # (time, number, prediction_timedelta
 | | AIFS Single v2 | AIFS-ENS v2 |
 |---|---|---|
 | per 6 h step | ~6.5 s | ~12.5 s |
-| 48 h forecast | 57 s | ~100 s per member |
-| peak MPS memory | ~9 GB reserved | 8.8 GB reserved / 3.3 GB live |
+| 48 h forecast | ~60 s | ~100 s per member |
+| peak MPS memory | ~14 GB | ~28 GB |
 | autocast (from checkpoint) | fp16 | bf16 |
-
-Retrieving one initial state takes ~180 s from azure. It is then reused by both models.
 
 ## Why two environments
 
@@ -100,7 +98,10 @@ usage sits ~3 GB while reserved can pass 80 GB. Specifying `--num-chunks` fixes 
 | **32 (default)** | **20 GB** | 12 s |
 | 64 | 17 GB | 13 s |
 
-`torch.mps.empty_cache()` runs after every step, holding the steady state near 8.8 GB.
+Those four rows were measured on a single step in isolation; a sustained 48 h run at
+`--num-chunks 32` peaks somewhat higher, at 24.4 GB (see *Measured performance*).
+`torch.mps.empty_cache()` runs after every step, which is what keeps the *between-steps*
+level down at 8.8 GB — it does not lower the in-step peak.
 
 `ANEMOI_INFERENCE_NUM_CHUNKS` is read into module-level constants when `anemoi.models` is
 *imported*, so `cli.preresolve_num_chunks` resolves `--num-chunks` before any anemoi import.
