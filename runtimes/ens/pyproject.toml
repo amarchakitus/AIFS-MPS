@@ -1,0 +1,21 @@
+# Runtime environment for AIFS-ENS v2.
+#
+# Exists only to pin anemoi-models 0.11.2 alongside the shared aifs-mps library. The
+# AIFS-ENS v2 checkpoint needs anemoi.models.layers.{ensemble,sparse_projector} and
+# AnemoiEnsModelEncProcDec, none of which exist in 0.9.3 -- while the Single v2
+# checkpoint needs anemoi.models.layers.chunk, which 0.11.x deleted. Neither version can
+# load both checkpoints. Two environments is not a style choice; see README.
+[project]
+name = "aifs-mps-runtime-ens"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = [
+    "aifs-mps",
+    "anemoi-models==0.11.2",
+]
+
+[dependency-groups]
+dev = ["pytest>=9.1.1"]
+
+[tool.uv.sources]
+aifs-mps = { path = "../..", editable = true }

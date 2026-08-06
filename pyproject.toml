@@ -1,0 +1,66 @@
+[project]
+name = "aifs-mps"
+version = "0.1.0"
+description = "Run ECMWF AIFS Single v2 and AIFS-ENS v2 on Apple silicon (MPS/Metal)"
+readme = "README.md"
+requires-python = ">=3.12"
+
+# Everything here is version-agnostic and shared by both runtimes. The one library the
+# two models disagree on -- anemoi-models -- is deliberately absent: it is pinned per
+# runtime in runtimes/{single,ens}/pyproject.toml. See README "Why two environments".
+dependencies = [
+    "anemoi-inference==0.8.3",
+    "anemoi-utils==0.4.35.post3",
+    "dask>=2026.7.1",
+    "earthkit-data<1.0.0",
+    "earthkit-regrid==0.5.1",
+    "ecmwf-opendata==0.3.29",
+    "numpy>=2.0",
+    "pyyaml>=6.0.3",
+    "scipy>=1.18.0",
+    "torch==2.7.0",
+    "torch-geometric==2.6.1",
+    "xarray>=2026.7.0",
+    "zarr>=3.3.0",
+]
+
+[project.scripts]
+aifs-single = "aifs_mps.cli:main_single"
+aifs-ens = "aifs_mps.cli:main_ens"
+
+[project.optional-dependencies]
+plots = ["matplotlib>=3.11.1", "cartopy>=0.25.0"]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+    "ruff>=0.16.1",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["aifs_mps"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "SIM", "C4", "RET", "ARG", "PTH", "RUF"]
+ignore = [
+    "E501",    # line length is handled by the formatter
+    "B008",    # argparse defaults call functions deliberately
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["ARG"]        # pytest fixtures are "unused arguments"
+
+[tool.ruff.lint.isort]
+force-single-line = true

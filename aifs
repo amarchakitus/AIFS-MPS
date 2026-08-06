@@ -1,0 +1,54 @@
+#!/usr/bin/env bash
+# Dispatcher: pick the runtime environment that has the right anemoi-models, then run.
+#
+# The two AIFS checkpoints need incompatible anemoi-models versions (0.9.3 vs 0.11.2) and
+# genuinely cannot share one virtualenv, so each lives in its own uv project under
+# runtimes/. This wrapper hides that: `./aifs single ...` and `./aifs ens ...` just work.
+set -euo pipefail
+cd "$(dirname "${BASH_SOURCE[0]}")"
+
+usage() {
+    cat <<'USAGE'
+Usage: ./aifs <command> [options]
+
+Commands:
+  setup            Create both runtime environments (uv sync)
+  single [opts]    Run AIFS Single v2  (deterministic)
+  ens    [opts]    Run AIFS-ENS v2     (ensemble)
+  test             Run the test suite
+  shell <model>    Open a python REPL in that model's runtime
+
+Any other options are passed through, e.g.:
+  ./aifs single --lead-time 48
+  ./aifs ens --members 10 --date 20260806T00
+  ./aifs single --help
+USAGE
+}
+
+command -v uv >/dev/null || { echo "uv is required: https://docs.astral.sh/uv/" >&2; exit 1; }
+
+cmd="${1:-}"; shift || true
+case "$cmd" in
+    setup)
+        for rt in single ens; do
+            echo "==> syncing runtimes/$rt"
+            uv sync --project "runtimes/$rt"
+        done
+        echo "==> done. Try: ./aifs single --help"
+        ;;
+    single|ens)
+        exec uv run --project "runtimes/$cmd" "aifs-$cmd" "$@"
+        ;;
+    test)
+        # The shared library is version-agnostic, so the suite runs in either runtime;
+        # use single's, which is the lighter of the two to build.
+        exec uv run --project runtimes/single pytest "$@"
+        ;;
+    shell)
+        model="${1:-}"; shift || true
+        [[ "$model" == "single" || "$model" == "ens" ]] || { usage; exit 1; }
+        exec uv run --project "runtimes/$model" python "$@"
+        ;;
+    ""|-h|--help|help) usage ;;
+    *) echo "Unknown command: $cmd" >&2; usage; exit 1 ;;
+esac

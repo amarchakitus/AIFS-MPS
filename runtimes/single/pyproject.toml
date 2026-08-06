@@ -1,0 +1,20 @@
+# Runtime environment for AIFS Single v2.
+#
+# Exists only to pin anemoi-models 0.9.3 alongside the shared aifs-mps library. The
+# AIFS Single v2 checkpoint is a pickled nn.Module that references
+# anemoi.models.layers.chunk, a module removed in 0.11.x, so it cannot be loaded by the
+# version AIFS-ENS needs. Two environments is not a style choice; see README.
+[project]
+name = "aifs-mps-runtime-single"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = [
+    "aifs-mps",
+    "anemoi-models==0.9.3",
+]
+
+[dependency-groups]
+dev = ["pytest>=9.1.1"]
+
+[tool.uv.sources]
+aifs-mps = { path = "../..", editable = true }
