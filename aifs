@@ -12,7 +12,8 @@ usage() {
 Usage: ./aifs <command> [options]
 
 Commands:
-  setup            Create both runtime environments (uv sync)
+  setup            Create both runtime environments, then offer to fetch the checkpoints
+  weights [opts]   Download model checkpoints (--yes / --no / --model / --force)
   single [opts]    Run AIFS Single v2  (deterministic)
   ens    [opts]    Run AIFS-ENS v2     (ensemble)
   test             Run the test suite
@@ -34,11 +35,22 @@ unset VIRTUAL_ENV
 cmd="${1:-}"; shift || true
 case "$cmd" in
     setup)
+        want_weights=1
+        for arg in "$@"; do
+            [ "$arg" = "--no-weights" ] && want_weights=0
+        done
         for rt in single ens; do
             echo "==> syncing runtimes/$rt"
             uv sync --project "runtimes/$rt"
         done
+        if [ "$want_weights" = 1 ]; then
+            # Needs a synced env for `requests`, so this runs after the syncs above.
+            uv run --project runtimes/single aifs-weights || true
+        fi
         echo "==> done. Try: ./aifs single --help"
+        ;;
+    weights)
+        exec uv run --project runtimes/single aifs-weights "$@"
         ;;
     single|ens)
         exec uv run --project "runtimes/$cmd" "aifs-$cmd" "$@"

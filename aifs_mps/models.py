@@ -1,12 +1,7 @@
 """The model registry -- the one place AIFS Single v2 and AIFS-ENS v2 differ.
 
-Everything else is written against :class:`ModelSpec`, so a third AIFS variant should mean a
-new entry here rather than branching through the code. The two are *not* interchangeable:
-they need genuinely incompatible ``anemoi-models`` versions (pinned per project under
-``runtimes/``), take different input field sets, and only ENS is stochastic and produces an
-ensemble along a ``number`` dimension. The field differences are expressed as which
-variables to drop from the shared superset, so the initial-condition cache stays
-model-agnostic.
+Everything else is written against :class:`ModelSpec`, so a third variant should be a new
+entry here rather than a branch in the code.
 """
 
 from __future__ import annotations
@@ -22,6 +17,12 @@ class ModelSpec:
 
     name: str
     checkpoint: str
+    """Checkpoint filename, also the name it is published under on Hugging Face."""
+
+    hf_repo: str
+    """Hugging Face repo holding the checkpoint. `aifs_mps.weights` turns this into a URL;
+    the registry deliberately records which model, not how to fetch it."""
+
     runtime: str
     """Directory under runtimes/ holding this model's pinned anemoi-models version."""
 
@@ -47,6 +48,7 @@ class ModelSpec:
 SINGLE = ModelSpec(
     name="single",
     checkpoint="aifs-single-mse-2.0.ckpt",
+    hf_repo="ecmwf/aifs-single-2.0",
     runtime="single",
     anemoi_models="0.9.3",
     ensemble=False,
@@ -67,6 +69,7 @@ SINGLE = ModelSpec(
 ENS = ModelSpec(
     name="ens",
     checkpoint="aifs-ens-crps-2.0.ckpt",
+    hf_repo="ecmwf/aifs-ens-2.0",
     runtime="ens",
     anemoi_models="0.11.2",
     ensemble=True,

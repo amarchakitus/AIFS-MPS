@@ -11,16 +11,14 @@ Zarr output layout.
 ./aifs single --help
 ```
 
-The checkpoints are not in the repo. Download them from <https://huggingface.co/ecmwf> and
-put them in `weights/`:
+`./aifs setup` creates both environments and then offers to fetch the checkpoints from
+[Hugging Face](https://huggingface.co/ecmwf). Fetch
+weights later with `./aifs weights`, or skip fetching with `./aifs setup --no-weights`. For
+scripting, `./aifs weights --yes`, `--no`, `--model single|ens` and `--force` bypass the
+prompt.
 
-```
-weights/aifs-single-mse-2.0.ckpt    # AIFS Single v2
-weights/aifs-ens-crps-2.0.ckpt      # AIFS-ENS v2
-```
-
-Either name can be overridden with `--checkpoint`, or the directory by setting
-`AIFS_MPS_WEIGHTS_DIR`.
+The checkpoint path can be overridden with `--checkpoint`, the directory with
+`AIFS_MPS_WEIGHTS_DIR`, and the download source with `HF_ENDPOINT`.
 
 If no `--date` is specified, the latest available IFS data from ECMWF Open Data are used as initial conditions. Outputs:
 

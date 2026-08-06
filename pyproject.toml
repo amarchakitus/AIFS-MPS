@@ -27,6 +27,7 @@ dependencies = [
 [project.scripts]
 aifs-single = "aifs_mps.cli:main_single"
 aifs-ens = "aifs_mps.cli:main_ens"
+aifs-weights = "aifs_mps.weights:main"
 
 [project.optional-dependencies]
 plots = ["matplotlib>=3.11.1", "cartopy>=0.25.0"]
