@@ -360,3 +360,121 @@ def test_the_index_add_projection_equals_torch_sparse_mm(sparse_projector):
     assert torch.allclose(out, expected, atol=1e-6)
     # The decomposition is cached on the instance; a stale or mis-keyed cache would show here.
     assert torch.allclose(projector.forward(x), expected, atol=1e-6)
+
+
+# -- mapper edge selection (MPS mis-sizes boolean masks) -------------------------
+
+
+class TestBipartiteSubgraphSelection:
+    """`bipartite_subgraph` derives edge_index and edge_attr from one boolean mask, so they
+    cannot legitimately disagree -- yet on MPS they intermittently did, because
+    boolean-mask indexing has a data-dependent output shape and the size readback is
+    occasionally wrong. Observed mid-rollout: 813120 columns against 406560 rows, exactly
+    the (2, E) element count instead of the column count.
+    """
+
+    @staticmethod
+    def _graph(seed=0, n_src=50, n_dst=40, n_edges=300):
+        import torch
+
+        g = torch.Generator().manual_seed(seed)
+        edge_index = torch.stack(
+            [
+                torch.randint(0, n_src, (n_edges,), generator=g),
+                torch.randint(0, n_dst, (n_edges,), generator=g),
+            ]
+        )
+        edge_attr = torch.randn(n_edges, 3, generator=g)
+        src = torch.randperm(n_src, generator=g)[: n_src * 3 // 4].sort().values
+        dst = torch.randperm(n_dst, generator=g)[: n_dst * 3 // 4].sort().values
+        return (src, dst), edge_index, edge_attr, (n_src, n_dst)
+
+    def test_it_matches_upstream_exactly(self):
+        """The replacement must be a drop-in; a subtly different subgraph would change the
+        forecast rather than crash."""
+        import torch
+        from torch_geometric.utils import bipartite_subgraph as upstream
+
+        from aifs_mps.patches.subgraph import patch_bipartite_subgraph
+
+        assert patch_bipartite_subgraph()
+        from anemoi.models.layers import mapper
+
+        for seed in range(25):
+            subset, edge_index, edge_attr, size = self._graph(seed)
+            want_i, want_a = upstream(
+                subset, edge_index, edge_attr, relabel_nodes=True, size=size
+            )
+            got_i, got_a = mapper.bipartite_subgraph(
+                subset, edge_index, edge_attr, relabel_nodes=True, size=size
+            )
+            assert torch.equal(got_i, want_i), f"edge_index differs at seed {seed}"
+            assert torch.equal(got_a, want_a), f"edge_attr differs at seed {seed}"
+
+    def test_edge_index_and_attr_can_never_disagree(self):
+        """The actual failure mode: one output sized differently from the other."""
+        from aifs_mps.patches.subgraph import patch_bipartite_subgraph
+
+        patch_bipartite_subgraph()
+        from anemoi.models.layers import mapper
+
+        for seed in range(25):
+            subset, edge_index, edge_attr, size = self._graph(seed)
+            got_i, got_a = mapper.bipartite_subgraph(
+                subset, edge_index, edge_attr, relabel_nodes=True, size=size
+            )
+            assert got_i.shape[1] == got_a.shape[0]
+
+    def test_a_miscounted_selection_is_detected_and_corrected(self, monkeypatch):
+        """A silently wrong `nonzero` would leave both outputs consistent but wrong -- the
+        decoder would run on the wrong edges and produce a plausible bad forecast. The
+        count check against `sum()` is what catches that, so it must actually fire.
+        """
+        import torch
+
+        from aifs_mps.patches import subgraph
+
+        mask = torch.tensor([True, False, True, True, False])
+        real_nonzero = torch.Tensor.nonzero
+        calls = []
+
+        def flaky_nonzero(self, *args, **kwargs):
+            # First call stands in for the device kernel losing an entry; the retry (which
+            # the fix routes to the CPU) behaves correctly.
+            calls.append(1)
+            if len(calls) == 1:
+                return torch.tensor([[0], [2]])
+            return real_nonzero(self, *args, **kwargs)
+
+        monkeypatch.setattr(torch.Tensor, "nonzero", flaky_nonzero, raising=False)
+        before = subgraph.miscount_events
+        index = subgraph._safe_edge_selection(mask)
+
+        assert subgraph.miscount_events == before + 1, "the miscount must be recorded"
+        assert len(calls) == 2, "it must actually retry rather than accept the bad count"
+        assert index.tolist() == [0, 2, 3], "and the correct indices recovered"
+
+    def test_the_static_shape_path_matches_nonzero(self):
+        """The MPS path avoids `nonzero` entirely by using cumsum + scatter, so it must be
+        proven equivalent — including the degenerate masks where an off-by-one in the dump
+        slot would bite."""
+        import torch
+
+        from aifs_mps.patches.subgraph import _static_shape_nonzero
+
+        g = torch.Generator().manual_seed(7)
+        masks = [
+            torch.zeros(0, dtype=torch.bool),
+            torch.zeros(8, dtype=torch.bool),
+            torch.ones(8, dtype=torch.bool),
+            torch.tensor([True] + [False] * 7),
+            torch.tensor([False] * 7 + [True]),
+        ]
+        masks += [torch.rand(n, generator=g) < p
+                  for n in (1, 17, 1000) for p in (0.01, 0.5, 0.99)]
+
+        for mask in masks:
+            got = _static_shape_nonzero(mask)
+            want = mask.nonzero().view(-1)
+            assert torch.equal(got, want), f"diverged for mask of {mask.numel()} entries"
+            assert got.dtype == want.dtype

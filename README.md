@@ -117,6 +117,7 @@ one call site for both runtimes.
 | `attention` | ✓ | ✓ | flash-attn → banded SDPA that fits in memory |
 | `graph_transformer` | – | ✓ | ENS pickles a Triton kernel; reroute to anemoi's own PyG backend |
 | `sparse_projector` | – | ✓ | ENS's noise projection is a sparse matmul, which MPS has no kernel for |
+| `subgraph` | ✓ | ✓ | MPS intermittently mis-sizes the mapper's boolean edge selection |
 
 **Banded attention.** Anemoi's own SDPA fallback builds a dense `seq_len × seq_len` mask;
 on the o96 hidden mesh (40 320 tokens) that is 52 GB of fp16 scores. Both models use
@@ -134,6 +135,19 @@ build, so the checkpoint could not even be opened. Anemoi's own PyG fallback liv
 `__init__`, which never runs when a whole model is unpickled — so the module is stubbed and
 `apply_gt` is routed onto that same branch. `GraphTransformerConv` is parameter-free, so
 nothing is lost.
+
+**Mis-sized edge selection.** The mappers slice a per-chunk subgraph with
+`bipartite_subgraph`, which derives `edge_index` and `edge_attr` from one boolean mask — so
+they cannot legitimately disagree. On MPS they intermittently did — killing a 60-step
+rollout at step 23 in one run and step 33 in another. Reproduced in isolation:
+`torch.nonzero` on MPS returns **too many** indices for masks above roughly 4M elements
+(0/200 wrong at 4M, 3/200 at our 13M decoder edge count, 10/200 at 20M), by an arbitrary
+factor of 1.01–1.95×. `torch.mps.synchronize()` does not help, so it is a fault in the
+kernel's own count aggregation rather than a missing host sync. The
+patch derives both from a single index tensor and verifies its length against
+`mask.sum()`, recomputing on CPU on mismatch — 6 corrections over a 60-step member. The
+verification matters as much as the fix: a mis-sized `nonzero` alone would leave both
+tensors consistent but wrong, i.e. a plausible bad forecast instead of a crash.
 
 **Sparse noise projection.** ENS projects noise onto the hidden mesh through a sparse COO
 matrix (40320 × 5248, ~2.0M nnz); MPS has no sparse backend. A COO matmul is

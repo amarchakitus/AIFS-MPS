@@ -17,6 +17,8 @@ patch                         Single   ENS    why
                                               anemoi's own PyG backend
 ``sparse_projector``          no       yes    ENS's noise projection is a sparse matmul,
                                               which MPS has no kernel for
+``subgraph``                  yes      yes    MPS intermittently mis-sizes the mapper's
+                                              boolean edge selection
 ============================  =======  =====  ==========================================
 
 Nothing else needs patching: every remaining op, including the scatter reductions behind the
@@ -35,6 +37,7 @@ from .attention import resolve_attention_dtype
 from .graph_transformer import patch_graph_transformer
 from .sparse_projector import patch_sparse_projector
 from .stubs import install as install_stubs
+from .subgraph import patch_bipartite_subgraph
 
 LOG = logging.getLogger(__name__)
 
@@ -53,6 +56,7 @@ def apply_all() -> None:
     applied = {
         "graph_transformer": patch_graph_transformer(),
         "sparse_projector": patch_sparse_projector(),
+        "subgraph": patch_bipartite_subgraph(),
     }
     skipped = [name for name, was_applied in applied.items() if not was_applied]
     if skipped:
