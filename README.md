@@ -117,7 +117,8 @@ one call site for both runtimes.
 | `attention` | ✓ | ✓ | flash-attn → banded SDPA that fits in memory |
 | `graph_transformer` | – | ✓ | ENS pickles a Triton kernel; reroute to anemoi's own PyG backend |
 | `sparse_projector` | – | ✓ | ENS's noise projection is a sparse matmul, which MPS has no kernel for |
-| `subgraph` | ✓ | ✓ | MPS intermittently mis-sizes the mapper's boolean edge selection |
+| `subgraph` | ✓ | ✓ | MPS intermittently mis-sizes the mapper's boolean edge selection (torch 2.7) |
+| `imputer` | ✓ | ✓ | anemoi indexes with a list; torch deprecates it. Same result, no per-step warning |
 
 **Banded attention.** Anemoi's own SDPA fallback builds a dense `seq_len × seq_len` mask;
 on the o96 hidden mesh (40 320 tokens) that is 52 GB of fp16 scores. Both models use

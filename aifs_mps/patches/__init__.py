@@ -18,7 +18,9 @@ patch                         Single   ENS    why
 ``sparse_projector``          no       yes    ENS's noise projection is a sparse matmul,
                                               which MPS has no kernel for
 ``subgraph``                  yes      yes    MPS intermittently mis-sizes the mapper's
-                                              boolean edge selection
+                                              boolean edge selection (torch 2.7)
+``imputer``                   yes      yes    anemoi indexes with a list, which torch
+                                              deprecates; same result, no warning
 ============================  =======  =====  ==========================================
 
 Nothing else needs patching: every remaining op, including the scatter reductions behind the
@@ -35,6 +37,7 @@ from .attention import banded_attention
 from .attention import patch_attention
 from .attention import resolve_attention_dtype
 from .graph_transformer import patch_graph_transformer
+from .imputer import patch_imputer_indexing
 from .sparse_projector import patch_sparse_projector
 from .stubs import install as install_stubs
 from .subgraph import patch_bipartite_subgraph
@@ -57,6 +60,7 @@ def apply_all() -> None:
         "graph_transformer": patch_graph_transformer(),
         "sparse_projector": patch_sparse_projector(),
         "subgraph": patch_bipartite_subgraph(),
+        "imputer": patch_imputer_indexing(),
     }
     skipped = [name for name, was_applied in applied.items() if not was_applied]
     if skipped:
