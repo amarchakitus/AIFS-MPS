@@ -1,0 +1,20 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+.pytest_cache/
+.ruff_cache/
+
+# Large assets and outputs
+weights/
+input_states/
+forecasts/
+*.ckpt
+
+.DS_Store
