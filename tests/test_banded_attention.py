@@ -110,9 +110,15 @@ def test_inherit_does_not_cast(device):
     assert torch.equal(inherited, explicit)
 
 
-@pytest.mark.parametrize("device", DEVICES)
-def test_float32_scores_beat_float16_against_an_fp32_reference(device):
-    """The fp32 default exists to be more accurate; assert it actually is."""
+@pytest.mark.skipif("mps" not in DEVICES, reason="requires Apple silicon")
+def test_float32_scores_beat_float16_against_an_fp32_reference():
+    """The fp32 default exists to be more accurate; assert it actually is.
+
+    MPS only: since torch 2.13 the CPU SDPA path upcasts fp16 internally, so both dtypes
+    give bit-identical error there and the option is a no-op. On MPS -- the device this
+    default exists for -- fp32 scores really are closer to an fp32 reference.
+    """
+    device = "mps"
     torch.manual_seed(0)
     q32, k32, v32 = (torch.randn(1, 4, 400, 64, device=device) for _ in range(3))
     reference = _dense_banded_reference(q32, k32, v32, 60)
@@ -121,3 +127,48 @@ def test_float32_scores_beat_float16_against_an_fp32_reference(device):
     err32 = (banded_attention(q, k, v, 60, block=128, compute_dtype=torch.float32).float() - reference).abs().max()
     err16 = (banded_attention(q, k, v, 60, block=128, compute_dtype=torch.float16).float() - reference).abs().max()
     assert err32 < err16
+
+
+# -- FlexAttention backend -------------------------------------------------------
+
+
+@pytest.mark.skipif("mps" not in DEVICES, reason="flex is compiled for the GPU path")
+class TestFlexBackend:
+    """The flex backend must be interchangeable with the banded one. It is not the default
+    (5-15x slower on Metal), so nothing else would notice if it silently diverged."""
+
+    def test_it_matches_a_dense_masked_reference(self):
+        from aifs_mps.patches.flex import flex_available
+        from aifs_mps.patches.flex import flex_band_attention
+
+        if not flex_available():
+            pytest.skip("FlexAttention unavailable in this torch build")
+
+        torch.manual_seed(0)
+        q, k, v = (torch.randn(1, 4, 512, 64, device="mps") for _ in range(3))
+        got = flex_band_attention(q, k, v, 128)
+        assert torch.allclose(got, _dense_banded_reference(q, k, v, 128), atol=1e-4)
+
+    def test_it_agrees_with_the_banded_implementation(self):
+        from aifs_mps.patches.flex import flex_available
+        from aifs_mps.patches.flex import flex_band_attention
+
+        if not flex_available():
+            pytest.skip("FlexAttention unavailable in this torch build")
+
+        torch.manual_seed(0)
+        q, k, v = (torch.randn(1, 4, 512, 64, device="mps") for _ in range(3))
+        for window in (64, 128, None):
+            a = flex_band_attention(q, k, v, window)
+            b = banded_attention(q, k, v, window)
+            assert torch.allclose(a, b, atol=1e-4), f"window={window}"
+
+    def test_the_block_mask_is_cached_by_geometry(self):
+        """Rebuilding it per call would dominate the cost; it depends only on the shape."""
+        from aifs_mps.patches.flex import _band_block_mask
+        from aifs_mps.patches.flex import flex_available
+
+        if not flex_available():
+            pytest.skip("FlexAttention unavailable in this torch build")
+        assert _band_block_mask(64, 512, "mps") is _band_block_mask(64, 512, "mps")
+        assert _band_block_mask(64, 512, "mps") is not _band_block_mask(32, 512, "mps")

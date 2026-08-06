@@ -18,10 +18,12 @@ dependencies = [
     "numpy>=2.0",
     "pyyaml>=6.0.3",
     "scipy>=1.18.0",
-    "torch==2.7.0",
+    "torch==2.13.0",
     "torch-geometric==2.6.1",
     "xarray>=2026.7.0",
     "zarr>=3.3.0",
+    "eccodes>=2.47.0",
+    "eccodeslib>=2.48.0.26",
 ]
 
 [project.scripts]
