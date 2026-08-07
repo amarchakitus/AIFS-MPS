@@ -25,10 +25,18 @@ LOG = logging.getLogger(__name__)
 
 __all__ = [
     "ATTENTION_DTYPES",
+    "ATTENTION_IMPLS",
     "banded_attention",
     "patch_attention",
     "resolve_attention_dtype",
 ]
+
+# Which implementation backs the window. "banded" tiles the band over SDPA by hand;
+# "flex" expresses it as a FlexAttention BlockMask. Flex is far more readable and is the
+# upstream direction, but on Metal it measures 5-15x slower at our shapes -- see
+# aifs_mps/patches/flex.py for the numbers. Selected with --attention-impl.
+ATTENTION_IMPLS = ("banded", "flex")
+DEFAULT_ATTENTION_IMPL = os.environ.get("AIFS_MPS_ATTN_IMPL", "banded")
 
 
 # Queries are processed in blocks of this many tokens.  Each block reads
@@ -209,7 +217,17 @@ def patch_attention() -> None:
             # stub here.  AIFS Single v2 has use_rotary_embeddings=False.
             raise NotImplementedError("rotary embeddings are not supported by the MPS attention patch")
 
+        if DEFAULT_ATTENTION_IMPL == "flex":
+            from .flex import flex_band_attention
+
+            if dropout_p:
+                raise NotImplementedError("dropout is not supported by the flex backend")
+            return flex_band_attention(
+                query, key, value, window_size, compute_dtype=DEFAULT_ATTN_DTYPE
+            )
+
         return banded_attention(query, key, value, window_size, dropout_p=dropout_p)
 
     anemoi_attention.FlashAttentionWrapper.forward = forward
+    LOG.info("Attention implementation: %s", DEFAULT_ATTENTION_IMPL)
     LOG.info("Patched FlashAttentionWrapper.forward -> banded SDPA (block=%d, dtype=%s)", DEFAULT_BLOCK, DEFAULT_ATTN_DTYPE)

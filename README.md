@@ -117,17 +117,27 @@ one call site for both runtimes.
 | `attention` | ✓ | ✓ | flash-attn → banded SDPA that fits in memory |
 | `graph_transformer` | – | ✓ | ENS pickles a Triton kernel; reroute to anemoi's own PyG backend |
 | `sparse_projector` | – | ✓ | ENS's noise projection is a sparse matmul, which MPS has no kernel for |
-| `subgraph` | ✓ | ✓ | MPS intermittently mis-sizes the mapper's boolean edge selection |
+| `subgraph` | ✓ | ✓ | MPS intermittently mis-sizes the mapper's boolean edge selection (torch 2.7) |
+| `imputer` | ✓ | ✓ | anemoi indexes with a list; torch deprecates it. Same result, no per-step warning |
 
 **Banded attention.** Anemoi's own SDPA fallback builds a dense `seq_len × seq_len` mask;
 on the o96 hidden mesh (40 320 tokens) that is 52 GB of fp16 scores. Both models use
 sliding-window attention (`window_size=1120`), which is exactly the band `|i−j| ≤ 1120`, so
 it is evaluated block by block — O(seq·window), numerically equivalent to flash-attn.
 
-**The 2³² trap.** `scaled_dot_product_attention` on MPS returns *silently wrong numbers*
-once `heads × q_len × k_len` exceeds 2³² (a 32-bit indexing overflow torch does not check).
-End to end that showed up as a 6.3 K error in forecast 2 m temperature. `_safe_block()`
-clamps for it.
+**The 2³² trap.** On torch 2.7, `scaled_dot_product_attention` returned *silently wrong
+numbers* once `heads × q_len × k_len` exceeded 2³² (a 32-bit indexing overflow torch did not
+check) — a 6.3 K error in forecast 2 m temperature. **Fixed in torch 2.13** (2.8e-7 where
+2.7 gave 7.5e-2); `_safe_block()` still clamps, as cheap insurance and because it also
+bounds memory.
+
+**Attention backend.** `--attention-impl flex` swaps the hand-tiled band for
+`torch.nn.attention.flex_attention` with a block-sparse `BlockMask`. Clearer, and the
+upstream direction — but on Metal it is 5–15× slower at our shapes (ENS bf16: 930 ms vs
+94 ms; single fp32: 581 ms vs 63 ms), identical memory, and unchanged numerics. BLOCK_SIZE
+64/128/256 and `max-autotune` do not close the gap: FlexAttention's speed comes from
+Triton-fused kernels, which the Inductor Metal backend does not produce. `banded` remains
+the default; worth re-benchmarking as torch's MPS backend matures.
 
 **Triton.** anemoi-models 0.11.2 ships a Triton GraphTransformer kernel and the ENS
 checkpoint was trained with it selected; the real module *raises on import* with no macOS
@@ -138,16 +148,18 @@ nothing is lost.
 
 **Mis-sized edge selection.** The mappers slice a per-chunk subgraph with
 `bipartite_subgraph`, which derives `edge_index` and `edge_attr` from one boolean mask — so
-they cannot legitimately disagree. On MPS they intermittently did — killing a 60-step
+they cannot legitimately disagree. On **torch 2.7** they intermittently did — killing a 60-step
 rollout at step 23 in one run and step 33 in another. Reproduced in isolation:
 `torch.nonzero` on MPS returns **too many** indices for masks above roughly 4M elements
 (0/200 wrong at 4M, 3/200 at our 13M decoder edge count, 10/200 at 20M), by an arbitrary
 factor of 1.01–1.95×. `torch.mps.synchronize()` does not help, so it is a fault in the
 kernel's own count aggregation rather than a missing host sync. The
 patch derives both from a single index tensor and verifies its length against
-`mask.sum()`, recomputing on CPU on mismatch — 6 corrections over a 60-step member. The
-verification matters as much as the fix: a mis-sized `nonzero` alone would leave both
-tensors consistent but wrong, i.e. a plausible bad forecast instead of a crash.
+`mask.sum()`. **Fixed in torch 2.13** (0/200 wrong where 2.7 gave 3/200), so the guard now
+*escalates* rather than always paying: plain `nonzero` first, the static-shape formulation
+only if the count disagrees, CPU as a last resort. Always taking the safe path cost ~3 s per
+ENS step. The verification matters as much as the fix: a mis-sized `nonzero` alone leaves
+both tensors consistent but wrong, i.e. a plausible bad forecast instead of a crash.
 
 **Sparse noise projection.** ENS projects noise onto the hidden mesh through a sparse COO
 matrix (40320 × 5248, ~2.0M nnz); MPS has no sparse backend. A COO matmul is

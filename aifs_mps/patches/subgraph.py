@@ -74,24 +74,32 @@ def _static_shape_nonzero(mask: torch.Tensor) -> torch.Tensor:
 
 
 def _safe_edge_selection(edge_mask: torch.Tensor) -> torch.Tensor:
-    """Indices of the True entries of `edge_mask`, verified against an independent count."""
+    """Indices of the True entries of `edge_mask`, verified against an independent count.
+
+    Escalates rather than always paying for the safe path: ``nonzero`` first (fastest, and
+    correct on torch >= 2.13 where the MPS fault is fixed), then the static-shape
+    formulation on device, then the CPU. ``mask.sum()`` -- a static-shape reduction --
+    arbitrates. This keeps the fix for anyone on an affected torch without taxing everyone
+    else; the expensive path measured ~1 s per forecast step on the ENS decoder.
+    """
     global miscount_events
 
     expected = int(edge_mask.sum())
+    index = edge_mask.nonzero().view(-1)
+    if index.numel() == expected:
+        return index
+
+    miscount_events += 1
+    LOG.warning(
+        "MPS mis-sized an edge selection (%d indices for %d set entries); retrying",
+        index.numel(),
+        expected,
+    )
     if edge_mask.device.type == "mps":
         index = _static_shape_nonzero(edge_mask)
-    else:
-        index = edge_mask.nonzero().view(-1)
-    if index.numel() != expected:
-        miscount_events += 1
-        LOG.warning(
-            "MPS mis-sized an edge selection (%d indices for %d set entries); "
-            "recomputing on the CPU",
-            index.numel(),
-            expected,
-        )
-        index = edge_mask.cpu().nonzero().view(-1).to(edge_mask.device)
-    return index
+        if index.numel() == expected:
+            return index
+    return edge_mask.cpu().nonzero().view(-1).to(edge_mask.device)
 
 
 def patch_bipartite_subgraph() -> bool:

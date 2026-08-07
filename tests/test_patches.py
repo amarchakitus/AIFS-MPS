@@ -478,3 +478,42 @@ class TestBipartiteSubgraphSelection:
             want = mask.nonzero().view(-1)
             assert torch.equal(got, want), f"diverged for mask of {mask.numel()} entries"
             assert got.dtype == want.dtype
+
+
+def test_the_imputer_patch_preserves_the_nan_mask():
+    """The patch only changes list indexing to tuple indexing. If those ever diverge, the
+    NaN mask feeding the sea-masked fields would silently change."""
+    import warnings
+
+    import torch
+
+    from aifs_mps.patches.imputer import patch_imputer_indexing
+
+    assert patch_imputer_indexing()
+    from anemoi.models.preprocessing.imputer import BaseImputer
+
+    torch.manual_seed(0)
+    for shape in [(1, 2, 64, 7), (1, 2, 3, 64, 7), (1, 2, 3, 4, 16, 5)]:
+        x = torch.randn(*shape)
+        x[(0,) * (len(shape) - 1)] = float("nan")
+        idx = [slice(None), slice(None)] + [0] * (x.ndim - 4) + [slice(None), slice(None)]
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            upstream = torch.isnan(x[idx])
+        assert torch.equal(BaseImputer.get_nans(None, x), upstream), f"diverged at ndim={x.ndim}"
+
+
+def test_the_imputer_patch_removes_the_deprecation_warning():
+    import warnings
+
+    import torch
+
+    from aifs_mps.patches.imputer import patch_imputer_indexing
+
+    patch_imputer_indexing()
+    from anemoi.models.preprocessing.imputer import BaseImputer
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        BaseImputer.get_nans(None, torch.randn(1, 2, 3, 8, 4))
+    assert not [w for w in caught if "non-tuple sequence" in str(w.message)]

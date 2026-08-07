@@ -60,6 +60,7 @@ def build_parser(spec: ModelSpec) -> argparse.ArgumentParser:
     from .opendata import DEFAULT_SOURCES
     from .opendata import SOURCES
     from .patches import ATTENTION_DTYPES
+    from .patches.attention import ATTENTION_IMPLS
     from .paths import forecast_dir
     from .paths import input_state_dir
     from .paths import lsm_path
@@ -116,6 +117,13 @@ def build_parser(spec: ModelSpec) -> argparse.ArgumentParser:
         help="dtype for attention scores/softmax, independent of --precision",
     )
     fc.add_argument("--attention-block", type=int, help="banded-attention query block size")
+    fc.add_argument(
+        "--attention-impl",
+        choices=ATTENTION_IMPLS,
+        default="banded",
+        help="sliding-window backend. 'flex' uses torch FlexAttention (clearer, and the "
+        "upstream direction) but measures 5-15x slower than 'banded' on Metal",
+    )
     fc.add_argument(
         "--num-chunks",
         type=int,
@@ -201,6 +209,7 @@ def run(model_spec: ModelSpec, args: argparse.Namespace) -> Path:
     patches.attention.DEFAULT_ATTN_DTYPE = resolve_attention_dtype(args.attention_dtype)
     if args.attention_block:
         patches.attention.DEFAULT_BLOCK = args.attention_block
+    patches.attention.DEFAULT_ATTENTION_IMPL = args.attention_impl
 
     members = getattr(args, "members", 1) if model_spec.ensemble else 1
     if members < 1:
@@ -248,9 +257,10 @@ def run(model_spec: ModelSpec, args: argparse.Namespace) -> Path:
         str(args.checkpoint), device=args.device, precision=args.precision, verbosity=args.verbose
     )
     LOG.info(
-        "%s | autocast=%s attention=%s block=%d num_chunks=%s",
+        "%s | autocast=%s attention=%s/%s block=%d num_chunks=%s",
         model_spec.pretty,
         runner.autocast,
+        args.attention_impl,
         args.attention_dtype,
         patches.attention.DEFAULT_BLOCK,
         os.environ.get("ANEMOI_INFERENCE_NUM_CHUNKS"),
