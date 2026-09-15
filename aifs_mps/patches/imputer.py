@@ -12,8 +12,8 @@ Indexing with a non-tuple sequence is deprecated, so every forecast step emits::
     x[torch.tensor(seq)], which will result either in an error or a different result.
 
 The results are **not** currently wrong: verified on the real input shapes (ndim 4/5/6) that
-``x[idx]`` and ``x[tuple(idx)]`` give identical NaN masks under torch 2.13. The warning's
-own text is stale -- it says the change lands in 2.9, and it has not by 2.13. And when it
+``x[idx]`` and ``x[tuple(idx)]`` give identical NaN masks under torch 2.14. The warning's
+own text is stale -- it says the change lands in 2.9, and it has not by 2.14. And when it
 does land, ``idx`` holds ``slice`` objects, which ``torch.tensor`` cannot represent, so this
 would raise rather than quietly return something different.
 

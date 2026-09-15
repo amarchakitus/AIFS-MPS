@@ -128,8 +128,9 @@ it is evaluated block by block — O(seq·window), numerically equivalent to fla
 **The 2³² trap.** On torch 2.7, `scaled_dot_product_attention` returned *silently wrong
 numbers* once `heads × q_len × k_len` exceeded 2³² (a 32-bit indexing overflow torch did not
 check) — a 6.3 K error in forecast 2 m temperature. **Fixed in torch 2.13** (2.8e-7 where
-2.7 gave 7.5e-2); `_safe_block()` still clamps, as cheap insurance and because it also
-bounds memory.
+2.7 gave 7.5e-2) **and still absent on 2.14**, where an over-limit call at 1.14 × 2³² scores
+is bit-identical to a chunked reference; `_safe_block()` still clamps, as cheap insurance and
+because it also bounds memory.
 
 **Attention backend.** `--attention-impl flex` swaps the hand-tiled band for
 `torch.nn.attention.flex_attention` with a block-sparse `BlockMask`. Clearer, and the
@@ -155,7 +156,8 @@ rollout at step 23 in one run and step 33 in another. Reproduced in isolation:
 factor of 1.01–1.95×. `torch.mps.synchronize()` does not help, so it is a fault in the
 kernel's own count aggregation rather than a missing host sync. The
 patch derives both from a single index tensor and verifies its length against
-`mask.sum()`. **Fixed in torch 2.13** (0/200 wrong where 2.7 gave 3/200), so the guard now
+`mask.sum()`. **Fixed in torch 2.13** (0/200 wrong where 2.7 gave 3/200) **and still fixed
+on 2.14** (0/200 at 4M, 13M and 20M), so the guard now
 *escalates* rather than always paying: plain `nonzero` first, the static-shape formulation
 only if the count disagrees, CPU as a last resort. Always taking the safe path cost ~3 s per
 ENS step. The verification matters as much as the fix: a mis-sized `nonzero` alone leaves

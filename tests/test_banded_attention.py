@@ -29,6 +29,15 @@ def _dense_banded_reference(q, k, v, window):
     return F.scaled_dot_product_attention(q, k, v, attn_mask=mask)
 
 
+def _float64_banded_reference(q, k, v, window):
+    """:func:`_dense_banded_reference` in float64 -- a yardstick for *how* wrong a result
+    is, rather than whether it is wrong.
+
+    Always on the CPU: MPS has no float64.
+    """
+    return _dense_banded_reference(*(t.cpu().double() for t in (q, k, v)), window)
+
+
 @pytest.mark.parametrize("device", DEVICES)
 @pytest.mark.parametrize("block", [64, 333, 1024, 4096])
 def test_matches_dense_band(device, block):
@@ -110,23 +119,31 @@ def test_inherit_does_not_cast(device):
     assert torch.equal(inherited, explicit)
 
 
-@pytest.mark.skipif("mps" not in DEVICES, reason="requires Apple silicon")
-def test_float32_scores_beat_float16_against_an_fp32_reference():
+@pytest.mark.parametrize("device", DEVICES)
+def test_float32_scores_beat_float16_against_a_float64_reference(device):
     """The fp32 default exists to be more accurate; assert it actually is.
 
-    MPS only: since torch 2.13 the CPU SDPA path upcasts fp16 internally, so both dtypes
-    give bit-identical error there and the option is a no-op. On MPS -- the device this
-    default exists for -- fp32 scores really are closer to an fp32 reference.
+    Inputs and outputs are both fp32 so that ``compute_dtype`` is the only thing varying.
+    That matters: :func:`banded_attention` returns in the *input* dtype, so feeding it
+    fp16 rounds the result onto the fp16 grid, and the gap this test is about is smaller
+    than one fp16 ULP. Measuring that way is how an earlier version of this test came to
+    assert nothing -- torch 2.14 made MPS fp16 SDPA ~2x more accurate (RMSE 3.5e-05 ->
+    1.7e-05) without touching the fp32 path, which pushed the fp16-rounded difference to
+    an exact tie on every seed.
     """
-    device = "mps"
     torch.manual_seed(0)
-    q32, k32, v32 = (torch.randn(1, 4, 400, 64, device=device) for _ in range(3))
-    reference = _dense_banded_reference(q32, k32, v32, 60)
+    q, k, v = (torch.randn(1, 4, 400, 64, device=device) for _ in range(3))
+    reference = _float64_banded_reference(q, k, v, 60)
 
-    q, k, v = (t.half() for t in (q32, k32, v32))
-    err32 = (banded_attention(q, k, v, 60, block=128, compute_dtype=torch.float32).float() - reference).abs().max()
-    err16 = (banded_attention(q, k, v, 60, block=128, compute_dtype=torch.float16).float() - reference).abs().max()
-    assert err32 < err16
+    def rmse(compute_dtype):
+        out = banded_attention(q, k, v, 60, block=128, compute_dtype=compute_dtype)
+        return ((out.cpu().double() - reference) ** 2).mean().sqrt().item()
+
+    err32, err16 = rmse(torch.float32), rmse(torch.float16)
+    # Measured 1272x on MPS and 1415x on CPU. The bar is 10x: loose enough to survive
+    # kernel changes like the one above, tight enough that dropping the upcast -- which
+    # would make both paths identical -- fails outright.
+    assert err16 > 10 * err32
 
 
 # -- FlexAttention backend -------------------------------------------------------
